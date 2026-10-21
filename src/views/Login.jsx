@@ -2,11 +2,13 @@ import { sendPasswordResetEmail } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
 import { Lock } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import PasswordChecklist from '../components/PasswordChecklist'
 import { btnPrimary, Field, inputCls, Notice } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
 import { errorMessage } from '../context/ToastContext'
 import { bootstrapAccountant } from '../lib/db'
 import { auth, db } from '../lib/firebase'
+import { isStrongPassword } from '../lib/password'
 
 function Card({ title, subtitle, children }) {
   return (
@@ -31,7 +33,7 @@ function SetupForm({ onCancel }) {
 
   async function submit(e) {
     e.preventDefault()
-    if (f.password.length < 8) return setError('Password must be at least 8 characters.')
+    if (!isStrongPassword(f.password)) return setError('Password does not meet the requirements below.')
     if (f.password !== f.confirm) return setError('Passwords do not match.')
     setSaving(true)
     setError('')
@@ -57,6 +59,7 @@ function SetupForm({ onCancel }) {
         </Field>
         <Field label="Password" required>
           <input type="password" className={inputCls} required value={f.password} onChange={set('password')} autoComplete="new-password" />
+          <PasswordChecklist password={f.password} className="mt-2" />
         </Field>
         <Field label="Confirm Password" required>
           <input type="password" className={inputCls} required value={f.confirm} onChange={set('confirm')} autoComplete="new-password" />

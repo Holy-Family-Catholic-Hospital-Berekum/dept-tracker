@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import PasswordChecklist from '../components/PasswordChecklist'
 import { btnPrimary, EmptyRow, Field, inputCls, panelCls, sectionTitleCls } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
 import { useData } from '../context/DataContext'
 import { errorMessage, useToast } from '../context/ToastContext'
 import { createStaff, sendStaffPasswordReset, updateStaff } from '../lib/db'
 import { formatTimestamp } from '../lib/format'
+import { generatePassword, isStrongPassword } from '../lib/password'
 import { ROLE_KEYS, ROLES } from '../lib/roles'
 
 const EMPTY = { name: '', email: '', password: '', role: 'social_worker' }
@@ -20,7 +22,7 @@ export default function Users() {
 
   async function handleCreate(e) {
     e.preventDefault()
-    if (f.password.length < 8) return toast('Temporary password must be at least 8 characters.', 'error')
+    if (!isStrongPassword(f.password)) return toast('Temporary password does not meet the password requirements.', 'error')
     setSaving(true)
     try {
       await createStaff(profile, { name: f.name.trim(), email: f.email.trim().toLowerCase(), password: f.password, role: f.role })
@@ -61,7 +63,17 @@ export default function Users() {
             <input type="email" className={inputCls} required value={f.email} onChange={set('email')} placeholder="name@example.com" />
           </Field>
           <Field label="Temporary Password" required>
-            <input type="text" className={inputCls} required minLength={8} value={f.password} onChange={set('password')} placeholder="Min. 8 characters" autoComplete="off" />
+            <div className="flex gap-1">
+              <input type="text" className={`${inputCls} font-mono`} required value={f.password} onChange={set('password')} placeholder="Strong password" autoComplete="off" />
+              <button
+                type="button"
+                onClick={() => setF((prev) => ({ ...prev, password: generatePassword() }))}
+                className="px-2 border border-slate-300 rounded-sm text-[11px] text-slate-600 hover:bg-slate-50"
+                title="Generate a strong password"
+              >
+                Generate
+              </button>
+            </div>
           </Field>
           <Field label="Role">
             <select className={inputCls} value={f.role} onChange={set('role')}>
@@ -76,8 +88,9 @@ export default function Users() {
             {saving ? 'Creating…' : 'Create Account'}
           </button>
         </fieldset>
+        <PasswordChecklist password={f.password} className="mt-3" />
         <p className="text-[11px] text-slate-500 mt-2">
-          Ask the officer to change their password with "Send Password Reset" after their first sign-in.
+          Give the temporary password to the officer privately, then use "Send Password Reset" so they can set their own.
         </p>
       </form>
 

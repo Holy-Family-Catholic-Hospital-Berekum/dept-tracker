@@ -44,7 +44,9 @@ export function useToast() {
 export function errorMessage(err) {
   if (err?.code === 'permission-denied') return 'Permission denied: your role cannot perform this action.'
   if (err?.code === 'auth/email-already-in-use') return 'An account with this email already exists.'
-  if (err?.code === 'auth/weak-password') return 'Password must be at least 6 characters.'
+  if (err?.code === 'auth/weak-password' || err?.code === 'auth/password-does-not-meet-requirements') {
+    return 'Password must be at least 8 characters with an uppercase letter, a lowercase letter, a number and a symbol.'
+  }
   if (err?.code === 'auth/invalid-credential' || err?.code === 'auth/wrong-password') return 'Incorrect email or password.'
   if (err?.code === 'auth/too-many-requests') return 'Too many attempts. Please wait a few minutes and try again.'
   if (err?.code === 'unavailable') return 'Cannot reach the server. Check the internet connection.'
