@@ -11,9 +11,15 @@ export function PrintProvider({ children }) {
     if (!job) return undefined
     const clear = () => setJob(null)
     window.addEventListener('afterprint', clear)
-    // Let the portal render before opening the print dialog.
-    const t = setTimeout(() => window.print(), 50)
+    // Let the portal render and the logo load before opening the print dialog.
+    let cancelled = false
+    const t = setTimeout(async () => {
+      const images = [...document.querySelectorAll('#print-root img')]
+      await Promise.all(images.map((img) => img.decode().catch(() => {})))
+      if (!cancelled) window.print()
+    }, 50)
     return () => {
+      cancelled = true
       clearTimeout(t)
       window.removeEventListener('afterprint', clear)
     }

@@ -16,6 +16,7 @@ export default function Receipt({ payment, agreement, balanceAfter, printedBy, p
   return (
     <div className="max-w-[148mm] mx-auto text-slate-800 font-sans">
       <div className="text-center border-b-2 border-slate-800 pb-3 mb-4">
+        <img src="/icon-192.png" alt="" className="w-20 h-20 mx-auto mb-2" />
         <h1 className="text-lg font-bold tracking-wide">HOLY FAMILY CATHOLIC HOSPITAL, BEREKUM</h1>
         <p className="text-xs text-slate-600">Social Welfare Unit — Patient Debt Recovery</p>
         <h2 className="mt-3 text-base font-semibold uppercase">{isReversal ? 'Payment Reversal Slip' : 'Payment Receipt'}</h2>

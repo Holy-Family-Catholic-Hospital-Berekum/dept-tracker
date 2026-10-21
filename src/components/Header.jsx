@@ -1,4 +1,4 @@
-import { Building2, Cross, LogOut, ShieldCheck, UserCheck } from 'lucide-react'
+import { Building2, LogOut, ShieldCheck, UserCheck } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export default function Header() {
@@ -8,7 +8,7 @@ export default function Header() {
     <header className="bg-slate-900 text-white shadow-md">
       <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col lg:flex-row justify-between items-center gap-4">
         <div className="flex items-center gap-3">
-          <Cross className="text-rose-500 w-7 h-7" />
+          <img src="/icon-192.png" alt="Holy Family Catholic Hospital, Berekum" className="w-11 h-11" />
           <div>
             <h1 className="text-xl font-bold tracking-wide">Patient Owings & Debt Recovery Tracker</h1>
             <p className="text-xs text-slate-400">Holy Family Hospital, Berekum — Financial Management Portal</p>

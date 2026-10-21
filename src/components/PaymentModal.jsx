@@ -5,7 +5,7 @@ import { usePrintReceipt } from '../context/PrintContext'
 import { errorMessage, useToast } from '../context/ToastContext'
 import { METHODS, PAYERS } from '../lib/constants'
 import { recordPayment } from '../lib/db'
-import { formatMoney, toPesewas, todayStr } from '../lib/format'
+import { addDays, formatMoney, MAX_DUE_ADVANCE_DAYS, nextDueAfterPayment, toPesewas, todayStr } from '../lib/format'
 import Modal from './Modal'
 import { btnSuccess, Field, inputCls } from './ui'
 
@@ -13,12 +13,19 @@ export default function PaymentModal({ agreement, onClose }) {
   const { profile, perms } = useAuth()
   const toast = useToast()
   const printReceipt = usePrintReceipt()
-  const [f, setF] = useState({ amount: '', method: 'Cash', paidBy: 'Patient', payerName: '', paidOn: todayStr(), note: '', nextDueDate: '' })
+  const autoDue = nextDueAfterPayment(agreement)
+  const [f, setF] = useState({ amount: '', method: 'Cash', paidBy: 'Patient', payerName: '', paidOn: todayStr(), note: '', nextDueDate: autoDue })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(null)
   const set = (key) => (e) => setF((prev) => ({ ...prev, [key]: e.target.value }))
 
   const patient = agreement.patient
+  // Accountant may set any date up to the deadline; others only forward, by at most one period (see firestore.rules).
+  const dueMin = perms.canEdit ? undefined : agreement.nextDueDate
+  const dueMax = perms.canEdit
+    ? agreement.finalDeadline
+    : [addDays(agreement.nextDueDate, MAX_DUE_ADVANCE_DAYS), agreement.finalDeadline].sort()[0]
+  const clearsBalance = toPesewas(f.amount) >= agreement.balance
   const info = `Patient: ${patient?.name} (${agreement.patientId}) | Current Balance: ${formatMoney(agreement.balance)}`
 
   async function submit() {
@@ -26,8 +33,11 @@ export default function PaymentModal({ agreement, onClose }) {
     if (!(amount > 0)) return toast('Please enter a valid payment amount.', 'error')
     if (amount > agreement.balance) return toast(`Amount exceeds the outstanding balance of ${formatMoney(agreement.balance)}.`, 'error')
     if (!f.paidOn || f.paidOn > todayStr()) return toast('Date paid cannot be in the future.', 'error')
-    if (f.nextDueDate && f.nextDueDate > agreement.finalDeadline) {
-      return toast(`New due date cannot be after the final deadline (${agreement.finalDeadline}).`, 'error')
+    if (!clearsBalance) {
+      if (!f.nextDueDate) return toast('Please set the next payment due date.', 'error')
+      if (f.nextDueDate > dueMax || (dueMin && f.nextDueDate < dueMin)) {
+        return toast(`Next due date must be between ${dueMin ?? 'any date'} and ${dueMax}.`, 'error')
+      }
     }
 
     setSaving(true)
@@ -39,7 +49,7 @@ export default function PaymentModal({ agreement, onClose }) {
         payerName: f.payerName.trim(),
         paidOn: f.paidOn,
         note: f.note.trim(),
-        nextDueDate: perms.canEdit ? f.nextDueDate : '',
+        nextDueDate: clearsBalance ? '' : f.nextDueDate,
       })
       setSaved({ payment, balanceAfter: agreement.balance - amount })
       toast(`Payment of ${formatMoney(amount)} recorded. Receipt ${payment.receiptNo}.`)
@@ -135,9 +145,24 @@ export default function PaymentModal({ agreement, onClose }) {
         <Field label="Note (Optional)">
           <input className={inputCls} value={f.note} onChange={set('note')} placeholder="e.g. MoMo ref 12345678" />
         </Field>
-        {perms.canEdit && (
-          <Field label={`New Due Date (Optional — currently ${agreement.nextDueDate})`}>
-            <input type="date" max={agreement.finalDeadline} className={inputCls} value={f.nextDueDate} onChange={set('nextDueDate')} />
+        {clearsBalance ? (
+          <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-sm p-2">
+            This payment clears the balance. No further due date is needed.
+          </p>
+        ) : (
+          <Field label="Next Payment Due Date">
+            <input type="date" min={dueMin} max={dueMax} className={inputCls} value={f.nextDueDate} onChange={set('nextDueDate')} />
+            <p className="text-[10px] text-slate-500 mt-1">
+              Currently {agreement.nextDueDate}.{' '}
+              {agreement.scheduleType === 'Lump Sum'
+                ? 'Single due date, unchanged by default.'
+                : `Auto-calculated: ${agreement.scheduleType.toLowerCase()} schedule → ${autoDue}.`}
+              {f.nextDueDate !== autoDue && (
+                <button type="button" onClick={() => setF((prev) => ({ ...prev, nextDueDate: autoDue }))} className="ml-1 text-sky-700 hover:underline">
+                  Reset
+                </button>
+              )}
+            </p>
           </Field>
         )}
       </div>

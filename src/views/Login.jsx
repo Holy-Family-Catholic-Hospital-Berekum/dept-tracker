@@ -1,6 +1,6 @@
 import { sendPasswordResetEmail } from 'firebase/auth'
 import { doc, getDoc } from 'firebase/firestore'
-import { Lock, ShieldCheck } from 'lucide-react'
+import { Lock } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { btnPrimary, Field, inputCls, Notice } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
@@ -12,9 +12,7 @@ function Card({ title, subtitle, children }) {
   return (
     <div className="max-w-md mx-auto mt-12 bg-white rounded-xl shadow-xs border border-slate-200 p-6">
       <div className="flex items-center gap-3 mb-4">
-        <div className="p-3 bg-sky-100 text-sky-600 rounded-lg">
-          <ShieldCheck className="w-6 h-6" />
-        </div>
+        <img src="/icon-192.png" alt="Holy Family Catholic Hospital, Berekum" className="w-14 h-14" />
         <div>
           <h2 className="text-lg font-bold text-slate-800">{title}</h2>
           <p className="text-xs text-slate-500">{subtitle}</p>

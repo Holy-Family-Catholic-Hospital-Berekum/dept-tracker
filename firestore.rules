@@ -174,6 +174,20 @@ service cloud.firestore {
         && (d.changes == null || d.changes is map);
     }
 
+    function dateOf(s) {
+      let p = s.split('-');
+      return timestamp.date(int(p[0]), int(p[1]), int(p[2]));
+    }
+
+    // Recording a payment advances the next due date by one schedule period. Non-accountants may
+    // only move it forward, by at most 31 days (deadline cap is in validAgreement).
+    function dueDateChangeAllowed(before, after) {
+      return after.nextDueDate == before.nextDueDate
+        || isAccountant()
+        || (after.nextDueDate > before.nextDueDate
+          && dateOf(after.nextDueDate) <= dateOf(before.nextDueDate) + duration.value(31, 'd'));
+    }
+
     // Agreement update that only posts the next ledger entry (payment or reversal).
     function postsLedgerEntry(agreementId) {
       let before = resource.data;
@@ -181,7 +195,7 @@ service cloud.firestore {
       let entry = docPath('payments', agreementId + '_' + string(after.paymentCount));
       return after.diff(before).affectedKeys().hasOnly(['totalPaid', 'paymentCount', 'nextDueDate',
           'updatedAt', 'updatedBy', 'lastAuditId'])
-        && (after.nextDueDate == before.nextDueDate || isAccountant())
+        && dueDateChangeAllowed(before, after)
         && after.paymentCount == before.paymentCount + 1
         && !exists(entry)
         && existsAfter(entry)

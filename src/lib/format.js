@@ -26,6 +26,27 @@ export function addDays(dateStr, days) {
   return todayStr(new Date(y, m - 1, d + days))
 }
 
+// Adds calendar months, clamping to the last day of the target month (31 Jan + 1 month → 28/29 Feb).
+export function addMonths(dateStr, months) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const lastDay = new Date(y, m - 1 + months + 1, 0).getDate()
+  return todayStr(new Date(y, m - 1 + months, Math.min(d, lastDay)))
+}
+
+// Next installment date after a payment: one schedule period after the current due date
+// (not the payment date, so arrears stay visible), never past the final deadline.
+export function nextDueAfterPayment({ scheduleType, nextDueDate, finalDeadline }) {
+  const next = {
+    Weekly: () => addDays(nextDueDate, 7),
+    'Bi-Weekly': () => addDays(nextDueDate, 14),
+    Monthly: () => addMonths(nextDueDate, 1),
+  }[scheduleType]?.() ?? nextDueDate
+  return next > finalDeadline ? finalDeadline : next
+}
+
+// Social workers may only move the due date forward by up to this many days (mirrors firestore.rules).
+export const MAX_DUE_ADVANCE_DAYS = 31
+
 export function daysBetween(fromStr, toStr) {
   const [y1, m1, d1] = fromStr.split('-').map(Number)
   const [y2, m2, d2] = toStr.split('-').map(Number)

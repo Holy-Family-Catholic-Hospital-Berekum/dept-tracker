@@ -188,8 +188,17 @@ describe('payments', () => {
   test('cannot pay more than the balance', () => assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 400000, totalPaid: 450000 })))
   test('cannot record a zero or negative payment', () => assertFails(postPayment('sw', 'agr1', { seq: 2, amount: -100, totalPaid: 49900 })))
 
-  test('social worker cannot move the due date when recording a payment', () =>
-    assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-12-01' } })))
+  test('social worker can advance the due date by one period when recording a payment', () =>
+    assertSucceeds(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-11-15' } })))
+
+  test('social worker cannot push the due date more than 31 days ahead', () =>
+    assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-12-15' } })))
+
+  test('social worker cannot move the due date backwards', () =>
+    assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-10-25' } })))
+
+  test('due date cannot pass the final deadline', () =>
+    assertFails(postPayment('acc', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2027-04-01' } })))
 
   test('accountant can move the due date when recording a payment', () =>
     assertSucceeds(postPayment('acc', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-12-01' } })))
