@@ -2,7 +2,8 @@
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing'
 import { collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
 import { readFileSync } from 'node:fs'
-import { afterAll, beforeAll, beforeEach, describe, test } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest'
+import { nextDueAfterPayment } from '../src/lib/format.js'
 
 let env
 
@@ -202,6 +203,37 @@ describe('payments', () => {
     await seedAgreement('agr2', 50000, { scheduleType: 'Monthly', nextDueDate: '2027-01-31' })
     await assertSucceeds(postPayment('sw', 'agr2', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2027-02-28' } }))
   })
+
+  // The app (nextDueAfterPayment) and the rules (scheduledNextDue) must agree, or a social worker's
+  // payment is rejected. Sweep the awkward dates: every month-end of 2027-2028 plus year-end crossings.
+  test('rules accept the date the app calculates, for every schedule', async () => {
+    const dates = []
+    for (const y of [2027, 2028]) {
+      for (let m = 1; m <= 12; m++) {
+        for (const d of [28, 29, 30, 31]) {
+          const s = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+          if (new Date(y, m - 1, d).getMonth() === m - 1) dates.push(s)
+        }
+      }
+    }
+    dates.push('2027-12-20', '2027-12-26')
+    const failures = []
+    let n = 0
+    for (const scheduleType of ['Weekly', 'Bi-Weekly', 'Monthly']) {
+      for (const nextDueDate of dates) {
+        const id = `sweep${n++}`
+        const terms = { scheduleType, nextDueDate, finalDeadline: '2029-12-31' }
+        await seedAgreement(id, 50000, terms)
+        const expected = nextDueAfterPayment(terms)
+        try {
+          await assertSucceeds(postPayment('sw', id, { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: expected } }))
+        } catch {
+          failures.push(`${scheduleType} ${nextDueDate} -> ${expected}`)
+        }
+      }
+    }
+    expect(failures).toEqual([])
+  }, 300000)
 
   test('scheduled due date is capped at the final deadline', async () => {
     await seedAgreement('agr3', 50000, { scheduleType: 'Weekly', nextDueDate: '2027-02-27' })
