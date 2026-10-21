@@ -1,0 +1,330 @@
+rules_version = '2';
+
+// Patient Owings & Debt Recovery Tracker - Holy Family Catholic Hospital, Berekum
+//
+// The app runs on the Spark plan (no Cloud Functions), so these rules are the only
+// server-side enforcement. Principles:
+//   * Every write is checked against the signed-in officer's role in /users/{uid}.
+//   * Every data change must be committed in the same batch as a new /auditLogs entry.
+//   * Audit entries, payments and reversals are append-only: never updated or deleted.
+//   * Money is stored as integer pesewas; agreement totals must match the payment ledger.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- helpers ----------
+
+    function docPath(coll, id) {
+      return /databases/$(database)/documents/$(coll)/$(id);
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(docPath('users', request.auth.uid));
+    }
+
+    function profile() {
+      return get(docPath('users', request.auth.uid)).data;
+    }
+
+    function isActive() {
+      return hasProfile() && profile().active == true;
+    }
+
+    function hasRole(roles) {
+      return isActive() && profile().role in roles;
+    }
+
+    function isAccountant() {
+      return hasRole(['accountant']);
+    }
+
+    // Accountant and social worker can register patients and record payments.
+    function canRecord() {
+      return hasRole(['accountant', 'social_worker']);
+    }
+
+    function canViewAudit() {
+      return hasRole(['accountant', 'auditor']);
+    }
+
+    // The audit entry for this write must be created in the same batch.
+    function auditedWith(auditId) {
+      return auditId is string
+        && !exists(docPath('auditLogs', auditId))
+        && existsAfter(docPath('auditLogs', auditId));
+    }
+
+    function createStamped(d) {
+      return d.createdBy == request.auth.uid
+        && d.createdAt == request.time
+        && d.updatedBy == request.auth.uid
+        && d.updatedAt == request.time;
+    }
+
+    function updateStamped(d) {
+      return d.updatedBy == request.auth.uid
+        && d.updatedAt == request.time
+        && d.createdBy == resource.data.createdBy
+        && d.createdAt == resource.data.createdAt;
+    }
+
+    function validText(v, min, max) {
+      return v is string && v.size() >= min && v.size() <= max;
+    }
+
+    function validDate(v) {
+      return v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    // ---------- validators ----------
+
+    function validUser(d) {
+      return d.keys().hasOnly(['name', 'email', 'role', 'active',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'lastAuditId'])
+        && validText(d.name, 2, 120)
+        && validText(d.email, 3, 200)
+        && d.role in ['accountant', 'social_worker', 'auditor']
+        && d.active is bool;
+    }
+
+    function validPatient(d) {
+      return d.keys().hasOnly(['folderId', 'name', 'ghanaCard', 'phone', 'location', 'landmark',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'lastAuditId'])
+        && validText(d.folderId, 2, 60)
+        && validText(d.name, 2, 120)
+        && validText(d.ghanaCard, 5, 30)
+        && validText(d.phone, 7, 20)
+        && validText(d.location, 2, 120)
+        && validText(d.landmark, 2, 200);
+    }
+
+    function validGuarantor(g) {
+      return g is map
+        && g.keys().hasOnly(['name', 'phone', 'ghanaCard', 'relation'])
+        && validText(g.name, 2, 120)
+        && validText(g.phone, 7, 20)
+        && validText(g.ghanaCard, 5, 30)
+        && validText(g.relation, 0, 200);
+    }
+
+    function validAgreement(d) {
+      return d.keys().hasOnly(['patientId', 'guarantor', 'totalBill', 'totalPaid', 'paymentCount',
+          'scheduleType', 'installmentAmount', 'nextDueDate', 'finalDeadline',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'lastAuditId'])
+        && d.patientId is string
+        && validGuarantor(d.guarantor)
+        && d.totalBill is int && d.totalBill > 0
+        && d.totalPaid is int && d.totalPaid >= 0 && d.totalPaid <= d.totalBill
+        && d.paymentCount is int && d.paymentCount >= 0
+        && d.scheduleType in ['Weekly', 'Bi-Weekly', 'Monthly', 'Lump Sum']
+        && d.installmentAmount is int && d.installmentAmount >= 0
+        && validDate(d.nextDueDate)
+        && validDate(d.finalDeadline)
+        && d.nextDueDate <= d.finalDeadline;
+    }
+
+    function validPayment(d) {
+      return d.keys().hasOnly(['agreementId', 'patientId', 'seq', 'type', 'amount', 'method',
+          'paidBy', 'payerName', 'paidOn', 'receiptNo', 'note', 'reversesPaymentId', 'reason',
+          'recordedBy', 'recordedByName', 'createdAt', 'auditId'])
+        && d.agreementId is string
+        && d.patientId is string
+        && d.seq is int && d.seq >= 1
+        && d.amount is int
+        && d.method in ['Cash', 'Mobile Money', 'Bank Transfer', 'Cheque']
+        && d.paidBy in ['Patient', 'Guarantor', 'Other']
+        && validText(d.payerName, 0, 120)
+        && validDate(d.paidOn)
+        && validText(d.receiptNo, 1, 60)
+        && validText(d.note, 0, 300)
+        && d.recordedBy == request.auth.uid
+        && d.recordedByName == profile().name
+        && d.createdAt == request.time;
+    }
+
+    function validReversal(d) {
+      let orig = get(docPath('payments', d.reversesPaymentId)).data;
+      return orig.type == 'payment'
+        && orig.agreementId == d.agreementId
+        && d.amount == -orig.amount
+        && validText(d.reason, 5, 300)
+        && !exists(docPath('reversals', d.reversesPaymentId))
+        && existsAfter(docPath('reversals', d.reversesPaymentId));
+    }
+
+    function validAudit(d) {
+      // getAfter so the very first (bootstrap) accountant can audit their own setup.
+      let me = getAfter(docPath('users', request.auth.uid)).data;
+      return me.active == true
+        && d.keys().hasOnly(['timestamp', 'uid', 'userName', 'role', 'action', 'entityType',
+            'entityId', 'patientRef', 'details', 'changes'])
+        && d.uid == request.auth.uid
+        && d.userName == me.name
+        && d.role == me.role
+        && d.timestamp == request.time
+        && validText(d.action, 2, 60)
+        && validText(d.entityType, 0, 40)
+        && validText(d.entityId, 0, 200)
+        && validText(d.patientRef, 0, 200)
+        && validText(d.details, 0, 1000)
+        && (d.changes == null || d.changes is map);
+    }
+
+    // Agreement update that only posts the next ledger entry (payment or reversal).
+    function postsLedgerEntry(agreementId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let entry = docPath('payments', agreementId + '_' + string(after.paymentCount));
+      return after.diff(before).affectedKeys().hasOnly(['totalPaid', 'paymentCount', 'nextDueDate',
+          'updatedAt', 'updatedBy', 'lastAuditId'])
+        && (after.nextDueDate == before.nextDueDate || isAccountant())
+        && after.paymentCount == before.paymentCount + 1
+        && !exists(entry)
+        && existsAfter(entry)
+        && getAfter(entry).data.amount == after.totalPaid - before.totalPaid;
+    }
+
+    // Accountant edit of terms; the ledger totals cannot change here.
+    function editsTerms() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guarantor', 'totalBill',
+          'scheduleType', 'installmentAmount', 'nextDueDate', 'finalDeadline',
+          'updatedAt', 'updatedBy', 'lastAuditId']);
+    }
+
+    // ---------- collections ----------
+
+    match /config/{docId} {
+      allow read: if true;
+      allow create: if docId == 'setup'
+        && signedIn()
+        && !exists(docPath('config', 'setup'))
+        && getAfter(docPath('users', request.auth.uid)).data.role == 'accountant'
+        && request.resource.data.keys().hasOnly(['completedBy', 'completedAt'])
+        && request.resource.data.completedBy == request.auth.uid
+        && request.resource.data.completedAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if hasRole(['accountant', 'auditor'])
+        || (signedIn() && request.auth.uid == uid);
+
+      // Accountant creates staff, or the very first accountant sets up the system.
+      allow create: if validUser(request.resource.data)
+        && createStamped(request.resource.data)
+        && auditedWith(request.resource.data.lastAuditId)
+        && (isAccountant() || (
+          uid == request.auth.uid
+          && request.resource.data.role == 'accountant'
+          && request.resource.data.active == true
+          && request.resource.data.email == request.auth.token.email
+          && !exists(docPath('config', 'setup'))
+          && existsAfter(docPath('config', 'setup'))
+        ));
+
+      // Accountant cannot demote or deactivate themselves (avoids locking everyone out).
+      allow update: if isAccountant()
+        && validUser(request.resource.data)
+        && updateStamped(request.resource.data)
+        && auditedWith(request.resource.data.lastAuditId)
+        && request.resource.data.email == resource.data.email
+        && (uid != request.auth.uid
+          || (request.resource.data.role == 'accountant' && request.resource.data.active == true));
+
+      allow delete: if false;
+    }
+
+    match /patients/{patientId} {
+      allow read: if isActive();
+
+      allow create: if canRecord()
+        && validPatient(request.resource.data)
+        && request.resource.data.folderId == patientId
+        && createStamped(request.resource.data)
+        && auditedWith(request.resource.data.lastAuditId);
+
+      allow update: if isAccountant()
+        && validPatient(request.resource.data)
+        && request.resource.data.folderId == resource.data.folderId
+        && updateStamped(request.resource.data)
+        && auditedWith(request.resource.data.lastAuditId);
+
+      allow delete: if false;
+    }
+
+    match /agreements/{agreementId} {
+      allow read: if isActive();
+
+      // Optional initial deposit is ledger entry #1, written in the same batch.
+      allow create: if canRecord()
+        && validAgreement(request.resource.data)
+        && createStamped(request.resource.data)
+        && auditedWith(request.resource.data.lastAuditId)
+        && existsAfter(docPath('patients', request.resource.data.patientId))
+        && (
+          (request.resource.data.paymentCount == 0 && request.resource.data.totalPaid == 0)
+          || (request.resource.data.paymentCount == 1
+            && request.resource.data.totalPaid > 0
+            && getAfter(docPath('payments', agreementId + '_1')).data.amount == request.resource.data.totalPaid)
+        );
+
+      allow update: if validAgreement(request.resource.data)
+        && updateStamped(request.resource.data)
+        && auditedWith(request.resource.data.lastAuditId)
+        && request.resource.data.patientId == resource.data.patientId
+        && (
+          (canRecord() && postsLedgerEntry(agreementId))
+          || (isAccountant() && editsTerms())
+        );
+
+      allow delete: if false;
+    }
+
+    // Ledger: payments (positive) and reversals (negative). IDs are {agreementId}_{seq}.
+    match /payments/{paymentId} {
+      allow read: if isActive();
+
+      allow create: if canRecord()
+        && validPayment(request.resource.data)
+        && paymentId == request.resource.data.agreementId + '_' + string(request.resource.data.seq)
+        && auditedWith(request.resource.data.auditId)
+        && getAfter(docPath('agreements', request.resource.data.agreementId)).data.paymentCount == request.resource.data.seq
+        && getAfter(docPath('agreements', request.resource.data.agreementId)).data.patientId == request.resource.data.patientId
+        && (exists(docPath('agreements', request.resource.data.agreementId))
+          ? get(docPath('agreements', request.resource.data.agreementId)).data.paymentCount == request.resource.data.seq - 1
+          : request.resource.data.seq == 1)
+        && (
+          (request.resource.data.type == 'payment'
+            && request.resource.data.amount > 0
+            && request.resource.data.reversesPaymentId == null
+            && request.resource.data.reason == null)
+          || (request.resource.data.type == 'reversal'
+            && isAccountant()
+            && validReversal(request.resource.data))
+        );
+
+      allow update, delete: if false;
+    }
+
+    // One marker per reversed payment, so a payment can only ever be reversed once.
+    match /reversals/{paymentId} {
+      allow read: if isActive();
+      allow create: if isAccountant()
+        && request.resource.data.keys().hasOnly(['reversalId', 'createdBy', 'createdAt'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && getAfter(docPath('payments', request.resource.data.reversalId)).data.reversesPaymentId == paymentId;
+      allow update, delete: if false;
+    }
+
+    match /auditLogs/{auditId} {
+      allow read: if canViewAudit();
+      allow create: if signedIn() && validAudit(request.resource.data);
+      allow update, delete: if false;
+    }
+  }
+}
