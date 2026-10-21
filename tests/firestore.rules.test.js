@@ -85,11 +85,11 @@ function payment(uid, agreementId, seq, amount, auditId, overrides = {}) {
 }
 
 // Seeds a patient + agreement (with `paid` already on the ledger as payment #1) bypassing rules.
-async function seedAgreement(id = 'agr1', paid = 50000) {
+async function seedAgreement(id = 'agr1', paid = 50000, terms = {}) {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const f = ctx.firestore()
     await setDoc(doc(f, 'patients', PATIENT.folderId), { ...PATIENT, ...created('acc', 'seed') })
-    await setDoc(doc(f, 'agreements', id), { ...TERMS, totalPaid: paid, paymentCount: paid ? 1 : 0, ...created('acc', 'seed') })
+    await setDoc(doc(f, 'agreements', id), { ...TERMS, ...terms, totalPaid: paid, paymentCount: paid ? 1 : 0, ...created('acc', 'seed') })
     if (paid) await setDoc(doc(f, 'payments', `${id}_1`), payment('acc', id, 1, paid, 'seed'))
   })
 }
@@ -188,14 +188,25 @@ describe('payments', () => {
   test('cannot pay more than the balance', () => assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 400000, totalPaid: 450000 })))
   test('cannot record a zero or negative payment', () => assertFails(postPayment('sw', 'agr1', { seq: 2, amount: -100, totalPaid: 49900 })))
 
-  test('social worker can advance the due date by one period when recording a payment', () =>
+  // Seeded agreement is Bi-Weekly with next due 2026-11-01, so the scheduled next date is 2026-11-15.
+  test('social worker payment applies the scheduled next due date', () =>
     assertSucceeds(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-11-15' } })))
 
-  test('social worker cannot push the due date more than 31 days ahead', () =>
-    assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-12-15' } })))
+  test('social worker cannot choose a different due date', () =>
+    assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-11-10' } })))
 
   test('social worker cannot move the due date backwards', () =>
     assertFails(postPayment('sw', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2026-10-25' } })))
+
+  test('monthly schedule clamps to the end of a shorter month', async () => {
+    await seedAgreement('agr2', 50000, { scheduleType: 'Monthly', nextDueDate: '2027-01-31' })
+    await assertSucceeds(postPayment('sw', 'agr2', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2027-02-28' } }))
+  })
+
+  test('scheduled due date is capped at the final deadline', async () => {
+    await seedAgreement('agr3', 50000, { scheduleType: 'Weekly', nextDueDate: '2027-02-27' })
+    await assertSucceeds(postPayment('sw', 'agr3', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2027-03-01' } }))
+  })
 
   test('due date cannot pass the final deadline', () =>
     assertFails(postPayment('acc', 'agr1', { seq: 2, amount: 20000, totalPaid: 70000, extra: { nextDueDate: '2027-04-01' } })))

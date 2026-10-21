@@ -18,7 +18,7 @@ export const ROLES = {
     canPay: true,
     canEdit: false,
     canReverse: false,
-    canExport: false,
+    canExport: true,
     canViewAudit: false,
     canManageUsers: false,
   },

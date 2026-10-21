@@ -35,6 +35,7 @@ export function addMonths(dateStr, months) {
 
 // Next installment date after a payment: one schedule period after the current due date
 // (not the payment date, so arrears stay visible), never past the final deadline.
+// Mirrored by scheduledNextDue() in firestore.rules.
 export function nextDueAfterPayment({ scheduleType, nextDueDate, finalDeadline }) {
   const next = {
     Weekly: () => addDays(nextDueDate, 7),
@@ -43,9 +44,6 @@ export function nextDueAfterPayment({ scheduleType, nextDueDate, finalDeadline }
   }[scheduleType]?.() ?? nextDueDate
   return next > finalDeadline ? finalDeadline : next
 }
-
-// Social workers may only move the due date forward by up to this many days (mirrors firestore.rules).
-export const MAX_DUE_ADVANCE_DAYS = 31
 
 export function daysBetween(fromStr, toStr) {
   const [y1, m1, d1] = fromStr.split('-').map(Number)

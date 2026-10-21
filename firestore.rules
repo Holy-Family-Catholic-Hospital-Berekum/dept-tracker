@@ -179,13 +179,35 @@ service cloud.firestore {
       return timestamp.date(int(p[0]), int(p[1]), int(p[2]));
     }
 
-    // Recording a payment advances the next due date by one schedule period. Non-accountants may
-    // only move it forward, by at most 31 days (deadline cap is in validAgreement).
+    // Same day next month, clamped to the month's last day (31 Jan → 28/29 Feb).
+    function addOneMonth(s) {
+      let p = s.split('-');
+      let y = int(p[0]);
+      let m = int(p[1]);
+      let d = int(p[2]);
+      let ny = m == 12 ? y + 1 : y;
+      let nm = m == 12 ? 1 : m + 1;
+      let lastDay = (timestamp.date(nm == 12 ? ny + 1 : ny, nm == 12 ? 1 : nm + 1, 1) - duration.value(1, 'd')).day();
+      return timestamp.date(ny, nm, d < lastDay ? d : lastDay);
+    }
+
+    // Mirrors nextDueAfterPayment() in src/lib/format.js: one schedule period after the current
+    // due date, capped at the final deadline. Lump Sum stays unchanged.
+    function scheduledNextDue(a) {
+      let due = dateOf(a.nextDueDate);
+      let next = a.scheduleType == 'Weekly' ? due + duration.value(7, 'd')
+        : a.scheduleType == 'Bi-Weekly' ? due + duration.value(14, 'd')
+        : a.scheduleType == 'Monthly' ? addOneMonth(a.nextDueDate)
+        : due;
+      let deadline = dateOf(a.finalDeadline);
+      return next > deadline ? deadline : next;
+    }
+
+    // Only the accountant chooses the next due date; anyone else can only apply the scheduled one.
     function dueDateChangeAllowed(before, after) {
       return after.nextDueDate == before.nextDueDate
         || isAccountant()
-        || (after.nextDueDate > before.nextDueDate
-          && dateOf(after.nextDueDate) <= dateOf(before.nextDueDate) + duration.value(31, 'd'));
+        || dateOf(after.nextDueDate) == scheduledNextDue(before);
     }
 
     // Agreement update that only posts the next ledger entry (payment or reversal).

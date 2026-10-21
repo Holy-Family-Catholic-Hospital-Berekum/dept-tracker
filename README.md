@@ -16,10 +16,10 @@ write-excel-file.
 | View records, dashboard, analytics, follow-up list | ✅ | ✅ | ✅ |
 | Register patients / new agreements | ✅ | ✅ | |
 | Record payments, print receipts | ✅ | ✅ | receipts only |
-| Set next due date when recording a payment | any date | forward ≤ 31 days | |
+| Next due date when recording a payment | auto, editable | auto (schedule) | |
 | Edit patient details, bill amount, due dates, deadline | ✅ | | |
 | Reverse a payment (with reason) | ✅ | | |
-| Export to Excel | ✅ | | ✅ |
+| Export to Excel | ✅ | ✅ | ✅ |
 | View audit trail | ✅ | | ✅ |
 | Create / deactivate staff accounts | ✅ | | |
 
